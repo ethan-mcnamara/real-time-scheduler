@@ -1,2 +1,2 @@
-# real-time-scheduler
-A course project for the University of Victoria course ECE 455 Real-Time Computer Systems.
+# real-time-traffic-light
+A course project for the University of Victoria course ECE 458 - Real Time Computer Systems Design Project
