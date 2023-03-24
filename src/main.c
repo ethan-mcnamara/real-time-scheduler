@@ -28,6 +28,8 @@
 #define PENDING_TASK_PRIORITY 0
 #define ACTIVE_TASK_PRIORITY 3
 
+#define MONITOR_PERIOD_MS 2000
+
 // Enum definitions
 enum message_type
 {
@@ -98,6 +100,7 @@ typedef struct user_defined_parameters
 static void UserDefined_Task( void *pvParameters );
 static void Generator_Task( void *pvParameters );
 static void Scheduler_Task( void *pvParameters );
+static void Monitor_Task( void *pvParameters );
 
 
 void create_dd_task(
@@ -114,6 +117,7 @@ void init_user_defined_task_parameters(generator_task_parameters *user_defined_t
 void sort_dd_task_list(dd_task_list *dd_task_list);
 void swap_nodes(dd_task_list *a, dd_task_list *b);
 static void prvSetupHardware( void );
+void output_task_lists(dd_task_list *active_task_list, dd_task_list *completed_task_list, dd_task_list *overdue_task_list);
 
 
 // Queue declarations
@@ -125,7 +129,7 @@ int main(void)
 	prvSetupHardware();
 
 	// Create the queues
-	xQueue_message_handle = xQueueCreate(mainQUEUE_LENGTH, sizeof(queue_message));
+	xQueue_message_handle = xQueueCreate(mainQUEUE_LENGTH, sizeof(queue_message*));
 	xQueue_monitor_handle = xQueueCreate(mainQUEUE_LENGTH, sizeof(dd_task_list*));
 
 	// Add the queues to the registry
@@ -135,6 +139,7 @@ int main(void)
 	// Create the  tasks used in the program
 	xTaskCreate(Generator_Task, "Generator", configMINIMAL_STACK_SIZE, NULL, GENERATOR_PRIORITY, NULL);
 	xTaskCreate(Scheduler_Task, "Scheduler", configMINIMAL_STACK_SIZE, NULL, SCHEDULER_PRIORITY, NULL);
+	xTaskCreate(Monitor_Task, "Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, NULL);
 
 	/* Start the tasks and timer running. */
 	printf("Before task scheduler\n");
@@ -147,6 +152,7 @@ int main(void)
 
 static void UserDefined_Task ( void *pvParameters )
 {
+	printf("Start User-Defined\n");
 	user_defined_parameters *parameters = (user_defined_parameters *) pvParameters;
 	TickType_t start_ticks = xTaskGetTickCount();
 
@@ -158,11 +164,13 @@ static void UserDefined_Task ( void *pvParameters )
 	message_parameters->task_id = parameters->task_id;
 	message->parameters = message_parameters;
 
-	if(xQueueSend(xQueue_message_handle, &message, 1000))
+	if(xQueueSend(xQueue_message_handle, &message, 1000) != pdTRUE)
 	{
 		printf("User Defined Task Failed!\n");
 		fflush(stdout);
 	}
+	printf("End User-Defined\n");
+	vTaskDelete( NULL );
 }
 
 static void Generator_Task ( void *pvParameters )
@@ -180,6 +188,7 @@ static void Generator_Task ( void *pvParameters )
 
 	while(1)
 	{
+		printf("Start Generator Loop\n");
 		// Create dd_task
 		uint8_t cur_task_index = task_index++;
 		dd_task *cur_task = pvPortMalloc( sizeof (dd_task) );
@@ -196,7 +205,7 @@ static void Generator_Task ( void *pvParameters )
 		queue_message *message = pvPortMalloc( sizeof(queue_message) );
 		message->type = RELEASE_DD_TASK;
 		message->parameters = cur_task;
-		if(xQueueSend(xQueue_message_handle, &message, 1000))
+		if(xQueueSend(xQueue_message_handle, &message, 1000) != pdTRUE)
 		{
 			printf("Generator Task Failed!\n");
 			fflush(stdout);
@@ -208,15 +217,22 @@ static void Generator_Task ( void *pvParameters )
 		{
 			vTaskDelay(sleep_until - xTaskGetTickCount());
 		}
+		printf("End Generator Loop\n");
 	}
 }
 
 static void Scheduler_Task ( void *pvParameters )
 {
 	dd_task_list *active_task_list = pvPortMalloc( sizeof(dd_task_list));
-	dd_task_list *completed_task_list;
-	dd_task_list *overdue_task_list;
-	queue_message *message = pvPortMalloc( sizeof(queue_message) );
+	active_task_list = NULL;
+	dd_task_list *completed_task_list = pvPortMalloc( sizeof(dd_task_list));
+	completed_task_list = NULL;
+	dd_task_list *overdue_task_list = pvPortMalloc( sizeof(dd_task_list));
+	overdue_task_list = NULL;
+	dd_task_list *comparison_list = pvPortMalloc( sizeof(dd_task_list));
+	comparison_list = NULL;
+	queue_message *message;
+	user_defined_parameters *parameters = pvPortMalloc( sizeof(user_defined_parameters) );
 
 	while (1)
 	{
@@ -226,34 +242,41 @@ static void Scheduler_Task ( void *pvParameters )
 			{
 			case RELEASE_DD_TASK:
 			{
+				printf("Start Release\n");
 				// Create new task
-				dd_task_list *comparison_list = pvPortMalloc( sizeof(dd_task_list));
-				if (active_task_list == comparison_list)
+				if (active_task_list != comparison_list)
 				{
 					vTaskPrioritySet(active_task_list->task.t_handle, PENDING_TASK_PRIORITY);
 				}
-				vPortFree(comparison_list);
 
-				user_defined_parameters *parameters = pvPortMalloc( sizeof(user_defined_parameters) );
+
 				parameters->task_id = message->parameters->task_id;
 				parameters->execution_time = message->parameters->execution_time;
 
 				xTaskCreate(UserDefined_Task, "UserDefined", configMINIMAL_STACK_SIZE,
 						parameters, PENDING_TASK_PRIORITY, &message->parameters->t_handle);
 				dd_task_list *new_task = pvPortMalloc( sizeof(dd_task_list));
+//				new_task->task = *(dd_task*)pvPortMalloc( sizeof(dd_task) );
 				new_task->task = *message->parameters;
 
 				dd_task_list *end_active_list = active_task_list;
-				while (end_active_list->next_task != NULL)
+				if (active_task_list == comparison_list)
 				{
-					end_active_list = end_active_list->next_task;
+					active_task_list = new_task;
 				}
-				end_active_list->next_task = new_task;
-
-				sort_dd_task_list(active_task_list);
+				else
+				{
+					while (end_active_list->next_task != NULL)
+					{
+						end_active_list = end_active_list->next_task;
+					}
+					end_active_list->next_task = new_task;
+					sort_dd_task_list(active_task_list);
+				}
 
 				// Remove overdue tasks
-				while (active_task_list->task.absolute_deadline < active_task_list->task.execution_time + xTaskGetTickCount())
+				while (active_task_list->task.absolute_deadline <
+						active_task_list->task.execution_time + xTaskGetTickCount())
 				{
 					dd_task_list *end_overdue_list = overdue_task_list;
 					while (end_overdue_list->next_task != NULL)
@@ -261,6 +284,7 @@ static void Scheduler_Task ( void *pvParameters )
 						end_overdue_list = end_overdue_list->next_task;
 					}
 					end_overdue_list->next_task = active_task_list;
+					end_overdue_list->next_task->next_task = NULL;
 					active_task_list = active_task_list->next_task;
 
 					end_overdue_list->next_task->task.completion_time = xTaskGetTickCount();
@@ -268,14 +292,16 @@ static void Scheduler_Task ( void *pvParameters )
 				}
 
 				vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
+				printf("End release\n");
 				break;
 			}
 
 			case COMPLETE_DD_TASK:
 			{
+				printf("Start complete\n");
 				// Delete task
 				message->parameters->completion_time = xTaskGetTickCount();
-				vTaskDelete(message->parameters->t_handle);
+//				vTaskDelete(message->parameters->t_handle);
 
 				dd_task_list *end_completed_list = completed_task_list;
 				while (end_completed_list->next_task != NULL)
@@ -285,15 +311,23 @@ static void Scheduler_Task ( void *pvParameters )
 				end_completed_list->next_task = active_task_list;
 				active_task_list = active_task_list->next_task;
 
+//				eTaskState cur_state = eTaskGetState(active_task_list->task.t_handle);
+
+				//
+				//
+				// BREAKING HERE ON 3RD ITERATION
+				//
+				//
 				vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
 
+				printf("End complete\n");
 				break;
 			}
 
 			case GET_ACTIVE_DD_TASK_LIST:
 			{
 				// Send active task list via queue
-				if(xQueueSend(xQueue_monitor_handle, &active_task_list, 1000))
+				if(xQueueSend(xQueue_monitor_handle, &active_task_list, 1000) != pdTRUE)
 				{
 					printf("Generator Task Failed!\n");
 					fflush(stdout);
@@ -304,7 +338,7 @@ static void Scheduler_Task ( void *pvParameters )
 			case GET_COMPLETED_DD_TASK_LIST:
 			{
 				// Send completed task list via queue
-				if(xQueueSend(xQueue_monitor_handle, &completed_task_list, 1000))
+				if(xQueueSend(xQueue_monitor_handle, &completed_task_list, 1000) != pdTRUE)
 				{
 					printf("Generator Task Failed!\n");
 					fflush(stdout);
@@ -315,7 +349,7 @@ static void Scheduler_Task ( void *pvParameters )
 			case GET_OVERDUE_DD_TASK_LIST:
 			{
 				// Send overdue task list via queue
-				if(xQueueSend(xQueue_monitor_handle, &overdue_task_list, 1000))
+				if(xQueueSend(xQueue_monitor_handle, &overdue_task_list, 1000) != pdTRUE)
 				{
 					printf("Generator Task Failed!\n");
 					fflush(stdout);
@@ -331,6 +365,123 @@ static void Scheduler_Task ( void *pvParameters )
 			}
 		}
 	}
+}
+
+static void Monitor_Task ( void *pvParameters )
+{
+	dd_task_list *active_task_list;
+	dd_task_list *completed_task_list;
+	dd_task_list *overdue_task_list;
+
+	queue_message *active_message = pvPortMalloc( sizeof(queue_message) );
+	active_message->type = GET_ACTIVE_DD_TASK_LIST;
+
+	queue_message *overdue_message = pvPortMalloc( sizeof(queue_message) );
+	overdue_message->type = GET_OVERDUE_DD_TASK_LIST;
+
+	queue_message *completed_message = pvPortMalloc( sizeof(queue_message) );
+	completed_message->type = GET_COMPLETED_DD_TASK_LIST;
+
+	while (1)
+	{
+		printf("Start monitor loop\n");
+		// Active queue
+		if(xQueueSend(xQueue_message_handle, &active_message, 1000) != pdTRUE)
+		{
+			printf("Monitor Task Failed!\n");
+			fflush(stdout);
+		}
+		if (xQueueReceive(xQueue_monitor_handle, &active_task_list, 1000) != pdPASS)
+		{
+			printf("Monitor Task Failed!\n");
+			fflush(stdout);
+		}
+
+		// Completed queue
+		if(xQueueSend(xQueue_message_handle, &completed_message, 1000) != pdTRUE)
+		{
+			printf("Monitor Task Failed!\n");
+			fflush(stdout);
+		}
+		if (xQueueReceive(xQueue_monitor_handle, &completed_task_list, 1000) != pdPASS)
+		{
+			printf("Monitor Task Failed!\n");
+			fflush(stdout);
+		}
+
+		// Overdue queue
+		if(xQueueSend(xQueue_message_handle, &overdue_message, 1000) != pdTRUE)
+		{
+			printf("Monitor Task Failed!\n");
+			fflush(stdout);
+		}
+		if (xQueueReceive(xQueue_monitor_handle, &overdue_task_list, 1000) != pdPASS)
+		{
+//			printf("Monitor Task Failed - overdue task list receive\n");
+//			fflush(stdout);
+		}
+
+		output_task_lists(active_task_list, completed_task_list, overdue_task_list);
+
+		vTaskDelay(MONITOR_PERIOD_MS / portTICK_PERIOD_MS);
+		printf("End monitor loop\n");
+	}
+}
+
+void output_task_lists(dd_task_list *active_task_list, dd_task_list *completed_task_list, dd_task_list *overdue_task_list)
+{
+	dd_task_list *cur_elem;
+	uint16_t counter = 0;
+
+	printf("ACTIVE LIST\n");
+	cur_elem = active_task_list;
+	while (cur_elem != NULL)
+	{
+		counter++;
+		printf("Task ID: %lu, ", cur_elem->task.task_id);
+		printf("Release time: %lu, ", cur_elem->task.release_time);
+		printf("Absolute deadline: %lu, ", cur_elem->task.absolute_deadline);
+		printf("Completion time: %lu\n", cur_elem->task.completion_time);
+		cur_elem = cur_elem->next_task;
+		fflush(stdout);
+	}
+	printf("Number active tasks: %d\n\n", counter);
+	fflush(stdout);
+
+	counter = 0;
+	printf("COMPLETED LIST\n");
+	cur_elem = completed_task_list;
+	while (cur_elem != NULL)
+	{
+		counter++;
+		printf("Task ID: %lu, ", cur_elem->task.task_id);
+		printf("Release time: %lu, ", cur_elem->task.release_time);
+		printf("Absolute deadline: %lu, ", cur_elem->task.absolute_deadline);
+		printf("Completion time: %lu\n", cur_elem->task.completion_time);
+		cur_elem = cur_elem->next_task;
+		fflush(stdout);
+	}
+	printf("Number completed tasks: %d\n\n", counter);
+	fflush(stdout);
+
+	counter = 0;
+	printf("OVERDUE LIST\n");
+	if (overdue_task_list != NULL)
+	{
+		cur_elem = overdue_task_list;
+		while (cur_elem != NULL)
+		{
+			counter++;
+			printf("Task ID: %lu, ", cur_elem->task.task_id);
+			printf("Release time: %lu, ", cur_elem->task.release_time);
+			printf("Absolute deadline: %lu, ", cur_elem->task.absolute_deadline);
+			printf("Completion time: %lu\n", cur_elem->task.completion_time);
+			cur_elem = cur_elem->next_task;
+			fflush(stdout);
+		}
+	}
+	printf("Number overdue tasks: %d\n", counter);
+	fflush(stdout);
 }
 
 void sort_dd_task_list(dd_task_list *task_list)
@@ -370,7 +521,6 @@ void swap_nodes(dd_task_list *a, dd_task_list *b)
 	temp = &a->task;
 	a->task = b->task;
 	b->task = *temp;
-	vPortFree (temp);
 }
 
 void init_user_defined_task_parameters(generator_task_parameters *user_defined_tasks[3])
