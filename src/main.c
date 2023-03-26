@@ -15,12 +15,12 @@
 
 #define mainQUEUE_LENGTH 100
 
-#define TASK1_EXECUTION_TIME 95
-#define TASK2_EXECUTION_TIME 150
-#define TASK3_EXECUTION_TIME 250
+#define TASK1_EXECUTION_TIME 100
+#define TASK2_EXECUTION_TIME 200
+#define TASK3_EXECUTION_TIME 200
 #define TASK1_PERIOD 500
 #define TASK2_PERIOD 500
-#define TASK3_PERIOD 750
+#define TASK3_PERIOD 500
 
 #define SCHEDULER_PRIORITY 1
 #define GENERATOR_PRIORITY 2
@@ -28,7 +28,7 @@
 #define PENDING_TASK_PRIORITY 0
 #define ACTIVE_TASK_PRIORITY 3
 
-#define MONITOR_PERIOD_MS 2000
+#define MONITOR_PERIOD_MS 500
 
 // Enum definitions
 enum message_type
@@ -72,14 +72,14 @@ typedef struct queue_message
 
 typedef struct generator_task_parameters
 {
-	uint16_t execution_time;
-	uint16_t period;
+	TickType_t execution_time;
+	TickType_t period;
 	uint32_t task_id;
 } generator_task_parameters;
 
 typedef struct user_defined_parameters
 {
-	uint16_t execution_time;
+	TickType_t execution_time;
 	uint32_t task_id;
 } user_defined_parameters;
 
@@ -142,17 +142,20 @@ int main(void)
 	xTaskCreate(Monitor_Task, "Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, NULL);
 
 	/* Start the tasks and timer running. */
-	printf("Before task scheduler\n");
+//	printf("Before task scheduler\n");
+	fflush(stdout);
 	vTaskStartScheduler();
 
 	printf("Insufficient heap\n");
+	fflush(stdout);
     return 0;
 
 }
 
 static void UserDefined_Task ( void *pvParameters )
 {
-	printf("Start User-Defined\n");
+//	printf("Start User-Defined\n");
+//	fflush(stdout);
 	user_defined_parameters *parameters = (user_defined_parameters *) pvParameters;
 	TickType_t start_ticks = xTaskGetTickCount();
 
@@ -162,6 +165,7 @@ static void UserDefined_Task ( void *pvParameters )
 	message->type = COMPLETE_DD_TASK;
 	dd_task *message_parameters = pvPortMalloc (sizeof(dd_task) );
 	message_parameters->task_id = parameters->task_id;
+	message_parameters->completion_time = xTaskGetTickCount();
 	message->parameters = message_parameters;
 
 	if(xQueueSend(xQueue_message_handle, &message, 1000) != pdTRUE)
@@ -169,7 +173,8 @@ static void UserDefined_Task ( void *pvParameters )
 		printf("User Defined Task Failed!\n");
 		fflush(stdout);
 	}
-	printf("End User-Defined\n");
+//	printf("End User-Defined\n");
+//	fflush(stdout);
 	vTaskDelete( NULL );
 }
 
@@ -188,7 +193,8 @@ static void Generator_Task ( void *pvParameters )
 
 	while(1)
 	{
-		printf("Start Generator Loop\n");
+//		printf("Start Generator Loop\n");
+//		fflush(stdout);
 		// Create dd_task
 		uint8_t cur_task_index = task_index++;
 		dd_task *cur_task = pvPortMalloc( sizeof (dd_task) );
@@ -197,9 +203,9 @@ static void Generator_Task ( void *pvParameters )
 		cur_task->release_time = xTaskGetTickCount();
 		cur_task->absolute_deadline = cur_task->release_time +
 									(user_defined_tasks[cur_task_index % 3]->period / portTICK_PERIOD_MS);
-//		cur_task->t_handle = task_array[task_index % 3];
+		cur_task->execution_time = user_defined_tasks[cur_task_index % 3]->execution_time;
 		cur_task->t_handle = NULL;
-		sleep_times[task_index % 3] = cur_task->absolute_deadline;
+		sleep_times[cur_task_index % 3] = cur_task->absolute_deadline;
 
 		//Send message
 		queue_message *message = pvPortMalloc( sizeof(queue_message) );
@@ -212,12 +218,14 @@ static void Generator_Task ( void *pvParameters )
 		}
 
 		// Sleep
-		TickType_t sleep_until = min(min(sleep_times[0], sleep_times[1]), sleep_times[2]);
-		if(sleep_until > xTaskGetTickCount())
+		TickType_t sleep_until = (min(min(sleep_times[0], sleep_times[1]), sleep_times[2]));
+		TickType_t cur_time = xTaskGetTickCount();
+		if(sleep_until > cur_time)
 		{
-			vTaskDelay(sleep_until - xTaskGetTickCount());
+			vTaskDelay(sleep_until - cur_time);
 		}
-		printf("End Generator Loop\n");
+//		printf("End Generator Loop\n");
+//		fflush(stdout);
 	}
 }
 
@@ -242,7 +250,8 @@ static void Scheduler_Task ( void *pvParameters )
 			{
 			case RELEASE_DD_TASK:
 			{
-				printf("Start Release\n");
+//				printf("Start Release\n");
+//				fflush(stdout);
 				// Create new task
 				if (active_task_list != comparison_list)
 				{
@@ -284,50 +293,58 @@ static void Scheduler_Task ( void *pvParameters )
 						end_overdue_list = end_overdue_list->next_task;
 					}
 					end_overdue_list->next_task = active_task_list;
-					end_overdue_list->next_task->next_task = NULL;
 					active_task_list = active_task_list->next_task;
+					end_overdue_list->next_task->next_task = NULL;
 
 					end_overdue_list->next_task->task.completion_time = xTaskGetTickCount();
 					vTaskDelete(end_overdue_list->next_task->task.t_handle);
 				}
 
-				vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
-				printf("End release\n");
+				if (active_task_list != comparison_list)
+				{
+					vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
+				}
+//				printf("End release\n");
+//				fflush(stdout);
 				break;
 			}
 
 			case COMPLETE_DD_TASK:
 			{
-				printf("Start complete\n");
-				// Delete task
-				message->parameters->completion_time = xTaskGetTickCount();
-//				vTaskDelete(message->parameters->t_handle);
+				active_task_list->task.completion_time = message->parameters->completion_time;
 
 				dd_task_list *end_completed_list = completed_task_list;
-				while (end_completed_list->next_task != NULL)
+				if (completed_task_list == comparison_list)
 				{
-					end_completed_list = end_completed_list->next_task;
+					completed_task_list = active_task_list;
+					active_task_list = active_task_list->next_task;
+					completed_task_list->next_task = NULL;
 				}
-				end_completed_list->next_task = active_task_list;
-				active_task_list = active_task_list->next_task;
+				else
+				{
+					while (end_completed_list->next_task != NULL)
+					{
+						end_completed_list = end_completed_list->next_task;
+					}
+					end_completed_list->next_task = active_task_list;
+					active_task_list = active_task_list->next_task;
+					end_completed_list->next_task->next_task = NULL;
+				}
 
-//				eTaskState cur_state = eTaskGetState(active_task_list->task.t_handle);
+				if (active_task_list != comparison_list)
+				{
+					vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
+				}
 
-				//
-				//
-				// BREAKING HERE ON 3RD ITERATION
-				//
-				//
-				vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
-
-				printf("End complete\n");
+//				printf("End complete\n");
+//				fflush(stdout);
 				break;
 			}
 
 			case GET_ACTIVE_DD_TASK_LIST:
 			{
 				// Send active task list via queue
-				if(xQueueSend(xQueue_monitor_handle, &active_task_list, 1000) != pdTRUE)
+				if(xQueueSend(xQueue_monitor_handle, &active_task_list, 3000) != pdTRUE)
 				{
 					printf("Generator Task Failed!\n");
 					fflush(stdout);
@@ -338,7 +355,7 @@ static void Scheduler_Task ( void *pvParameters )
 			case GET_COMPLETED_DD_TASK_LIST:
 			{
 				// Send completed task list via queue
-				if(xQueueSend(xQueue_monitor_handle, &completed_task_list, 1000) != pdTRUE)
+				if(xQueueSend(xQueue_monitor_handle, &completed_task_list, 3000) != pdTRUE)
 				{
 					printf("Generator Task Failed!\n");
 					fflush(stdout);
@@ -349,7 +366,7 @@ static void Scheduler_Task ( void *pvParameters )
 			case GET_OVERDUE_DD_TASK_LIST:
 			{
 				// Send overdue task list via queue
-				if(xQueueSend(xQueue_monitor_handle, &overdue_task_list, 1000) != pdTRUE)
+				if(xQueueSend(xQueue_monitor_handle, &overdue_task_list, 3000) != pdTRUE)
 				{
 					printf("Generator Task Failed!\n");
 					fflush(stdout);
@@ -382,49 +399,51 @@ static void Monitor_Task ( void *pvParameters )
 	queue_message *completed_message = pvPortMalloc( sizeof(queue_message) );
 	completed_message->type = GET_COMPLETED_DD_TASK_LIST;
 
+
 	while (1)
 	{
-		printf("Start monitor loop\n");
+//		printf("Start monitor loop\n");
 		// Active queue
 		if(xQueueSend(xQueue_message_handle, &active_message, 1000) != pdTRUE)
 		{
-			printf("Monitor Task Failed!\n");
+			printf("Monitor Task Failed! - Send active\n");
 			fflush(stdout);
 		}
 		if (xQueueReceive(xQueue_monitor_handle, &active_task_list, 1000) != pdPASS)
 		{
-			printf("Monitor Task Failed!\n");
+			printf("Monitor Task Failed! - Receive active\n");
 			fflush(stdout);
 		}
 
 		// Completed queue
 		if(xQueueSend(xQueue_message_handle, &completed_message, 1000) != pdTRUE)
 		{
-			printf("Monitor Task Failed!\n");
+			printf("Monitor Task Failed! - Send Completed\n");
 			fflush(stdout);
 		}
 		if (xQueueReceive(xQueue_monitor_handle, &completed_task_list, 1000) != pdPASS)
 		{
-			printf("Monitor Task Failed!\n");
+			printf("Monitor Task Failed! - receive completed\n");
 			fflush(stdout);
 		}
 
 		// Overdue queue
 		if(xQueueSend(xQueue_message_handle, &overdue_message, 1000) != pdTRUE)
 		{
-			printf("Monitor Task Failed!\n");
+			printf("Monitor Task Failed! - send overdue\n");
 			fflush(stdout);
 		}
 		if (xQueueReceive(xQueue_monitor_handle, &overdue_task_list, 1000) != pdPASS)
 		{
-//			printf("Monitor Task Failed - overdue task list receive\n");
-//			fflush(stdout);
+			printf("Monitor Task Failed - overdue task list receive\n");
+			fflush(stdout);
 		}
 
 		output_task_lists(active_task_list, completed_task_list, overdue_task_list);
 
 		vTaskDelay(MONITOR_PERIOD_MS / portTICK_PERIOD_MS);
-		printf("End monitor loop\n");
+//		printf("End monitor loop\n");
+		fflush(stdout);
 	}
 }
 
@@ -438,46 +457,57 @@ void output_task_lists(dd_task_list *active_task_list, dd_task_list *completed_t
 	while (cur_elem != NULL)
 	{
 		counter++;
-		printf("Task ID: %lu, ", cur_elem->task.task_id);
-		printf("Release time: %lu, ", cur_elem->task.release_time);
-		printf("Absolute deadline: %lu, ", cur_elem->task.absolute_deadline);
-		printf("Completion time: %lu\n", cur_elem->task.completion_time);
-		cur_elem = cur_elem->next_task;
+		printf("Task ID: %d, ", cur_elem->task.task_id);
 		fflush(stdout);
+		printf("Release time: %d, ", cur_elem->task.release_time);
+		fflush(stdout);
+		printf("Absolute deadline: %d, ", cur_elem->task.absolute_deadline);
+		fflush(stdout);
+		printf("Completion time: %d\n", cur_elem->task.completion_time);
+		fflush(stdout);
+		cur_elem = cur_elem->next_task;
 	}
 	printf("Number active tasks: %d\n\n", counter);
 	fflush(stdout);
 
 	counter = 0;
 	printf("COMPLETED LIST\n");
+	fflush(stdout);
 	cur_elem = completed_task_list;
 	while (cur_elem != NULL)
 	{
 		counter++;
-		printf("Task ID: %lu, ", cur_elem->task.task_id);
-		printf("Release time: %lu, ", cur_elem->task.release_time);
-		printf("Absolute deadline: %lu, ", cur_elem->task.absolute_deadline);
-		printf("Completion time: %lu\n", cur_elem->task.completion_time);
-		cur_elem = cur_elem->next_task;
+		printf("Task ID: %d, ", cur_elem->task.task_id);
 		fflush(stdout);
+		printf("Release time: %d, ", cur_elem->task.release_time);
+		fflush(stdout);
+		printf("Absolute deadline: %d, ", cur_elem->task.absolute_deadline);
+		fflush(stdout);
+		printf("Completion time: %d\n", cur_elem->task.completion_time);
+		fflush(stdout);
+		cur_elem = cur_elem->next_task;
 	}
 	printf("Number completed tasks: %d\n\n", counter);
 	fflush(stdout);
 
 	counter = 0;
 	printf("OVERDUE LIST\n");
+	fflush(stdout);
 	if (overdue_task_list != NULL)
 	{
 		cur_elem = overdue_task_list;
 		while (cur_elem != NULL)
 		{
 			counter++;
-			printf("Task ID: %lu, ", cur_elem->task.task_id);
-			printf("Release time: %lu, ", cur_elem->task.release_time);
-			printf("Absolute deadline: %lu, ", cur_elem->task.absolute_deadline);
-			printf("Completion time: %lu\n", cur_elem->task.completion_time);
-			cur_elem = cur_elem->next_task;
+			printf("Task ID: %d, ", cur_elem->task.task_id);
 			fflush(stdout);
+			printf("Release time: %d, ", cur_elem->task.release_time);
+			fflush(stdout);
+			printf("Absolute deadline: %d, ", cur_elem->task.absolute_deadline);
+			fflush(stdout);
+			printf("Completion time: %d\n", cur_elem->task.completion_time);
+			fflush(stdout);
+			cur_elem = cur_elem->next_task;
 		}
 	}
 	printf("Number overdue tasks: %d\n", counter);
@@ -518,7 +548,7 @@ void sort_dd_task_list(dd_task_list *task_list)
 void swap_nodes(dd_task_list *a, dd_task_list *b)
 {
 	dd_task *temp = malloc (sizeof (dd_task) );
-	temp = &a->task;
+	*temp = (a->task);
 	a->task = b->task;
 	b->task = *temp;
 }
@@ -594,6 +624,8 @@ static void prvSetupHardware( void )
 	/* Ensure all priority bits are assigned as preemption priority bits.
 	http://www.freertos.org/RTOS-Cortex-M3-M4.html */
 	NVIC_SetPriorityGrouping( 0 );
+
+	vApplicationIdleHook();
 
 	/* TODO: Setup the clocks, etc. here, if they were not configured before
 	main() was called. */
