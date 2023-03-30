@@ -13,6 +13,7 @@
 #include "../FreeRTOS_Source/include/timers.h"
 #include "../inc/stm32f4xx_rcc.h"
 
+#include "string.h"
 #define mainQUEUE_LENGTH 100
 
 #define TASK1_EXECUTION_TIME 100
@@ -232,12 +233,19 @@ static void Generator_Task ( void *pvParameters )
 static void Scheduler_Task ( void *pvParameters )
 {
 	dd_task_list *active_task_list = pvPortMalloc( sizeof(dd_task_list));
+	memset( active_task_list, 0, sizeof(dd_task_list));
 	active_task_list = NULL;
+
 	dd_task_list *completed_task_list = pvPortMalloc( sizeof(dd_task_list));
+	memset( completed_task_list, 0, sizeof(dd_task_list));
 	completed_task_list = NULL;
+
 	dd_task_list *overdue_task_list = pvPortMalloc( sizeof(dd_task_list));
+	memset( overdue_task_list, 0, sizeof(dd_task_list));
 	overdue_task_list = NULL;
+
 	dd_task_list *comparison_list = pvPortMalloc( sizeof(dd_task_list));
+	memset( comparison_list, 0, sizeof(dd_task_list));
 	comparison_list = NULL;
 	queue_message *message;
 	user_defined_parameters *parameters = pvPortMalloc( sizeof(user_defined_parameters) );
@@ -267,6 +275,7 @@ static void Scheduler_Task ( void *pvParameters )
 				dd_task_list *new_task = pvPortMalloc( sizeof(dd_task_list));
 //				new_task->task = *(dd_task*)pvPortMalloc( sizeof(dd_task) );
 				new_task->task = *message->parameters;
+				new_task->next_task = NULL;
 
 				dd_task_list *end_active_list = active_task_list;
 				if (active_task_list == comparison_list)
@@ -391,14 +400,17 @@ static void Monitor_Task ( void *pvParameters )
 	dd_task_list *overdue_task_list;
 
 	queue_message *active_message = pvPortMalloc( sizeof(queue_message) );
+	memset( active_message, 0, sizeof(queue_message));
+
 	active_message->type = GET_ACTIVE_DD_TASK_LIST;
 
 	queue_message *overdue_message = pvPortMalloc( sizeof(queue_message) );
+	memset( overdue_message, 0, sizeof(queue_message));
 	overdue_message->type = GET_OVERDUE_DD_TASK_LIST;
 
 	queue_message *completed_message = pvPortMalloc( sizeof(queue_message) );
+	memset( completed_message, 0, sizeof(queue_message));
 	completed_message->type = GET_COMPLETED_DD_TASK_LIST;
-
 
 	while (1)
 	{
