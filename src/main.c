@@ -143,7 +143,6 @@ int main(void)
 	xTaskCreate(Monitor_Task, "Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, NULL);
 
 	/* Start the tasks and timer running. */
-//	printf("Before task scheduler\n");
 	fflush(stdout);
 	vTaskStartScheduler();
 
@@ -155,8 +154,6 @@ int main(void)
 
 static void UserDefined_Task ( void *pvParameters )
 {
-//	printf("Start User-Defined\n");
-//	fflush(stdout);
 	user_defined_parameters *parameters = (user_defined_parameters *) pvParameters;
 	TickType_t start_ticks = xTaskGetTickCount();
 
@@ -174,8 +171,7 @@ static void UserDefined_Task ( void *pvParameters )
 		printf("User Defined Task Failed!\n");
 		fflush(stdout);
 	}
-//	printf("End User-Defined\n");
-//	fflush(stdout);
+
 	vTaskDelete( NULL );
 }
 
@@ -194,8 +190,6 @@ static void Generator_Task ( void *pvParameters )
 
 	while(1)
 	{
-//		printf("Start Generator Loop\n");
-//		fflush(stdout);
 		// Create dd_task
 		uint8_t cur_task_index = task_index++;
 		dd_task *cur_task = pvPortMalloc( sizeof (dd_task) );
@@ -225,8 +219,6 @@ static void Generator_Task ( void *pvParameters )
 		{
 			vTaskDelay(sleep_until - cur_time);
 		}
-//		printf("End Generator Loop\n");
-//		fflush(stdout);
 	}
 }
 
@@ -258,14 +250,11 @@ static void Scheduler_Task ( void *pvParameters )
 			{
 			case RELEASE_DD_TASK:
 			{
-//				printf("Start Release\n");
-//				fflush(stdout);
 				// Create new task
 				if (active_task_list != comparison_list)
 				{
 					vTaskPrioritySet(active_task_list->task.t_handle, PENDING_TASK_PRIORITY);
 				}
-
 
 				parameters->task_id = message->parameters->task_id;
 				parameters->execution_time = message->parameters->execution_time;
@@ -273,7 +262,6 @@ static void Scheduler_Task ( void *pvParameters )
 				xTaskCreate(UserDefined_Task, "UserDefined", configMINIMAL_STACK_SIZE,
 						parameters, PENDING_TASK_PRIORITY, &message->parameters->t_handle);
 				dd_task_list *new_task = pvPortMalloc( sizeof(dd_task_list));
-//				new_task->task = *(dd_task*)pvPortMalloc( sizeof(dd_task) );
 				new_task->task = *message->parameters;
 				new_task->next_task = NULL;
 
@@ -313,8 +301,6 @@ static void Scheduler_Task ( void *pvParameters )
 				{
 					vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
 				}
-//				printf("End release\n");
-//				fflush(stdout);
 				break;
 			}
 
@@ -345,8 +331,6 @@ static void Scheduler_Task ( void *pvParameters )
 					vTaskPrioritySet( active_task_list->task.t_handle, ACTIVE_TASK_PRIORITY);
 				}
 
-//				printf("End complete\n");
-//				fflush(stdout);
 				break;
 			}
 
@@ -414,7 +398,6 @@ static void Monitor_Task ( void *pvParameters )
 
 	while (1)
 	{
-//		printf("Start monitor loop\n");
 		// Active queue
 		if(xQueueSend(xQueue_message_handle, &active_message, 1000) != pdTRUE)
 		{
@@ -454,8 +437,6 @@ static void Monitor_Task ( void *pvParameters )
 		output_task_lists(active_task_list, completed_task_list, overdue_task_list);
 
 		vTaskDelay(MONITOR_PERIOD_MS / portTICK_PERIOD_MS);
-//		printf("End monitor loop\n");
-		fflush(stdout);
 	}
 }
 
